@@ -1,6 +1,6 @@
 # serializers.py
 from rest_framework import serializers
-from games.models import Games, Studio, Genre, Platform, Director
+from games.models import Games, Studio, Genre, Platform, Director, Comment
 
 class GamesSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
@@ -63,3 +63,8 @@ class DirectorSerializer(serializers.ModelSerializer):
         fields = "__all__"
 
 
+class CommentSerializer(serializers.ModelSerializer):
+    username = serializers.ReadOnlyField(source='user.username')
+    class Meta:
+        model = Comment
+        fields = ['id', 'username', 'text', 'created']

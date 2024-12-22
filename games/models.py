@@ -1,4 +1,6 @@
 from django.db import models
+from django.contrib.auth.models import User
+
 
 class Studio(models.Model):
     name = models.TextField("Название")
@@ -32,7 +34,6 @@ class Director(models.Model):
     def __str__(self):
         return self.name
 
-    
 
 
 class Platform (models.Model):
@@ -61,3 +62,8 @@ class Games (models.Model):
         verbose_name ="Игра"
         verbose_name_plural = "Игры"
 
+class Comment(models.Model):
+    game = models.ForeignKey(Games, on_delete=models.CASCADE, related_name='comments')
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    text = models.TextField()
+    created = models.DateTimeField(auto_now_add=True)

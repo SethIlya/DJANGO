@@ -7,16 +7,16 @@ import PlatformView from '../views/PlatformView.vue';
 import GamesView from '../views/GamesView.vue';
 import TestView from '../views/TestView.vue';
 const routes = [
- {
+  {
   path: '/',
   name: 'Games',
   component: GamesView,  
- },
- {
+  },
+  {
   path: '/test',
   name: 'Test',
   component: TestView,
- },
+  },
  {
   path: '/genres',
   name: 'Genres',

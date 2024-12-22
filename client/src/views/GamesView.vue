@@ -14,16 +14,31 @@ const studios = ref([]);
 const directors = ref([]);
 const platforms = ref([]);
 
+const statistics = ref({
+  mostProductiveStudio: '',
+  mostPopularGenre: '',
+  mostProductiveDirector: '',
+  mostPopularPlatform: ''
+});
+
 const gamesPictureRef = ref(null);
 const gamesAddImageUrl = ref('');
 const editPictureRef = ref(null);
 const editImageUrl = ref('');
-const viewImageUrl = ref(''); // URL изображения для просмотра
+const viewImageUrl = ref(''); 
 
-// Поле для фильтра по имени пользователя
-const filterUsername = ref('');
+// Поля для фильтрации
+const filterName = ref('');
+const filterStudio = ref('');
+const filterGenre = ref('');
+const filterDirector = ref('');
+const filterPlatform = ref('');
 
-// Устанавливаем CSRF токен при монтировании
+// Храним комментарии для каждой игры
+const commentsByGameId = ref({});
+// Поле для нового комментария для каждой игры
+const newCommentText = ref({});
+
 onMounted(() => {
   const csrfToken = Cookies.get('csrftoken');
   if (csrfToken) {
@@ -33,17 +48,77 @@ onMounted(() => {
   }
 });
 
-// Загрузка данных с учетом фильтра по username, если указан
+// Загрузка игр с учётом фильтров
 async function fetchGames() {
   try {
-    let url = "/api/games/";
-    if (filterUsername.value) {
-      url += `?username=${encodeURIComponent(filterUsername.value)}`;
+    let url = "/api/games/?";
+    const params = [];
+
+    if (filterName.value) {
+      params.push(`name=${encodeURIComponent(filterName.value)}`);
     }
+    if (filterStudio.value) {
+      params.push(`studio=${encodeURIComponent(filterStudio.value)}`);
+    }
+    if (filterGenre.value) {
+      params.push(`genre=${encodeURIComponent(filterGenre.value)}`);
+    }
+    if (filterDirector.value) {
+      params.push(`director=${encodeURIComponent(filterDirector.value)}`);
+    }
+    if (filterPlatform.value) {
+      params.push(`platform=${encodeURIComponent(filterPlatform.value)}`);
+    }
+
+    url += params.join('&');
+
     const response = await axios.get(url);
     games.value = response.data;
+
+    // Загрузим комментарии для каждой игры
+    for (let g of games.value) {
+      await fetchCommentsForGame(g.id);
+    }
   } catch (error) {
     console.error('Ошибка при получении игр:', error);
+  }
+}
+
+async function fetchCommentsForGame(gameId) {
+  try {
+    const response = await axios.get(`/api/games/${gameId}/comments/`);
+    commentsByGameId.value[gameId] = response.data; // последние 4 комментария
+  } catch (error) {
+    console.error(`Ошибка при получении комментариев для игры ${gameId}:`, error);
+  }
+}
+
+async function addComment(gameId) {
+  const text = newCommentText.value[gameId] || '';
+  if (!text.trim()) {
+    alert("Введите текст комментария");
+    return;
+  }
+
+  try {
+    const response = await axios.post(`/api/games/${gameId}/comments/`, { text });
+    // Добавляем новый комментарий в начало массива
+    if (!commentsByGameId.value[gameId]) {
+      commentsByGameId.value[gameId] = [];
+    }
+    commentsByGameId.value[gameId].unshift(response.data);
+
+    // Если теперь стало >4 комментариев, обрежем массив
+    if (commentsByGameId.value[gameId].length > 4) {
+      commentsByGameId.value[gameId].pop();
+    }
+
+    newCommentText.value[gameId] = ''; // очистим поле ввода
+  } catch (error) {
+    console.error('Ошибка при добавлении комментария:', error);
+    if (error.response && error.response.status === 403) {
+      alert("Требуется авторизация, чтобы оставить комментарий.");
+    }
   }
 }
 
@@ -83,12 +158,25 @@ async function fetchPlatforms() {
   }
 }
 
+async function fetchStatistics() {
+  try {
+    const response = await axios.get("/api/games/statistics/");
+    statistics.value.mostProductiveStudio = response.data.most_productive_studio;
+    statistics.value.mostPopularGenre = response.data.most_popular_genre;
+    statistics.value.mostProductiveDirector = response.data.most_productive_director;
+    statistics.value.mostPopularPlatform = response.data.most_popular_platform;
+  } catch (error) {
+    console.error('Ошибка при получении статистики:', error);
+  }
+}
+
 onBeforeMount(async () => {
   await fetchGenres();
   await fetchStudios();
   await fetchDirectors();
   await fetchPlatforms();
   await fetchGames();
+  await fetchStatistics();
 });
 
 const genreById = computed(() => _.keyBy(genres.value, 'id'));
@@ -125,6 +213,7 @@ async function onGamesAdd() {
     });
 
     await fetchGames();
+    await fetchStatistics();
     gamesToAdd.value = { name: '', genre: null, studio: null, director: null, platform: null, picture: null };
     gamesAddImageUrl.value = '';
     if (gamesPictureRef.value) {
@@ -137,9 +226,12 @@ async function onGamesAdd() {
 }
 
 async function onGamesDelete(game) {
+  if (!confirm(`Вы уверены, что хотите удалить игру "${game.name}"?`)) return;
+
   try {
     await axios.delete(`/api/games/${game.id}`);
     await fetchGames();
+    await fetchStatistics();
   } catch (error) {
     console.error('Ошибка при удалении игры:', error);
   }
@@ -178,6 +270,7 @@ async function onUpdateGames() {
     });
 
     await fetchGames();
+    await fetchStatistics();
     gamesToEdit.value = { name: '', genre: null, studio: null, director: null, platform: null, picture: null };
     editImageUrl.value = '';
     if (editPictureRef.value) {
@@ -218,13 +311,154 @@ function closeImageModal() {
   if (modal) modal.hide();
 }
 
-// Применить фильтр по username
-function applyUserFilter() {
-  fetchGames();
+// Применить фильтры
+async function applyFilters() {
+  await fetchGames();
+  await fetchStatistics();
 }
 </script>
 
 <template>
+  <div class="p-3 mb-4 border rounded">
+    <h4>Статистика</h4>
+    <div class="row g-3">
+      <div class="col">
+        <div class="card p-2">
+          <b>Самая продуктивная студия по выпуску игр:</b> 
+          <div>{{ statistics.mostProductiveStudio || 'Нет данных' }}</div>
+        </div>
+      </div>
+      <div class="col">
+        <div class="card p-2">
+          <b>Самый популярный жанр игр:</b>
+          <div>{{ statistics.mostPopularGenre || 'Нет данных' }}</div>
+        </div>
+      </div>
+      <div class="col">
+        <div class="card p-2">
+          <b>Самый продуктивный режиссёр по выпуску игр:</b>
+          <div>{{ statistics.mostProductiveDirector || 'Нет данных' }}</div>
+        </div>
+      </div>
+      <div class="col">
+        <div class="card p-2">
+          <b>Самая популярная платформа:</b>
+          <div>{{ statistics.mostPopularPlatform || 'Нет данных' }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Фильтры -->
+  <div class="p-3 mb-4 border rounded">
+    <h4>Фильтры</h4>
+    <div class="row gy-3 align-items-end">
+      <div class="col-md-2">
+        <label class="form-label">Имя игры</label>
+        <input type="text" class="form-control" v-model="filterName" placeholder="Название">
+      </div>
+      <div class="col-md-2">
+        <label class="form-label">Студия</label>
+        <select class="form-select" v-model="filterStudio">
+          <option value="">Все</option>
+          <option :value="s.id" v-for="s in studios" :key="s.id">{{ s.name }}</option>
+        </select>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label">Жанр</label>
+        <select class="form-select" v-model="filterGenre">
+          <option value="">Все</option>
+          <option :value="g.id" v-for="g in genres" :key="g.id">{{ g.name }}</option>
+        </select>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label">Режиссёр</label>
+        <select class="form-select" v-model="filterDirector">
+          <option value="">Все</option>
+          <option :value="d.id" v-for="d in directors" :key="d.id">{{ d.name }} {{ d.surname }}</option>
+        </select>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label">Платформа</label>
+        <select class="form-select" v-model="filterPlatform">
+          <option value="">Все</option>
+          <option :value="p.id" v-for="p in platforms" :key="p.id">{{ p.name }}</option>
+        </select>
+      </div>
+      <div class="col-12">
+        <button class="btn btn-info" @click="applyFilters">Применить фильтр</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Форма добавления новой игры -->
+  <div class="p-2">
+    <div class="row mb-4 align-items-end">
+      <div class="col">
+        <div class="form-floating">
+          <input
+            type="text"
+            class="form-control"
+            v-model="gamesToAdd.name"
+            placeholder="Название игры"
+          />
+          <label>Название игры</label>
+        </div>
+      </div>
+      <div class="col-auto">
+        <div class="form-floating">
+          <select class="form-select" v-model="gamesToAdd.genre">
+            <option disabled value="">Выберите жанр</option>
+            <option :value="g.id" v-for="g in genres" :key="g.id">{{ g.name }}</option>
+          </select>
+          <label>Жанр</label>
+        </div>
+      </div>
+      <div class="col-auto">
+        <div class="form-floating">
+          <select class="form-select" v-model="gamesToAdd.studio">
+            <option disabled value="">Выберите студию</option>
+            <option :value="s.id" v-for="s in studios" :key="s.id">{{ s.name }}</option>
+          </select>
+          <label>Студия</label>
+        </div>
+      </div>
+      <div class="col-auto">
+        <div class="form-floating">
+          <select class="form-select" v-model="gamesToAdd.director">
+            <option disabled value="">Выберите руководителя</option>
+            <option :value="d.id" v-for="d in directors" :key="d.id">{{ d.name }} {{ d.surname }}</option>
+          </select>
+          <label>Руководитель</label>
+        </div>
+      </div>
+      <div class="col-auto">
+        <div class="form-floating">
+          <select class="form-select" v-model="gamesToAdd.platform">
+            <option disabled value="">Выберите платформу</option>
+            <option :value="p.id" v-for="p in platforms" :key="p.id">{{ p.name }}</option>
+          </select>
+          <label>Платформа</label>
+        </div>
+      </div>
+      <div class="col-auto">
+        <label class="form-label">Изображение</label>
+        <input 
+          class="form-control" 
+          type="file" 
+          ref="gamesPictureRef" 
+          @change="gamesAddPictureChange"
+        >
+        <div v-if="gamesAddImageUrl" class="mt-2">
+          <img :src="gamesAddImageUrl" style="max-height: 60px;" alt="Предпросмотр">
+        </div>
+      </div>
+      <div class="col-auto">
+        <button class="btn btn-primary" @click="onGamesAdd">Добавить</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Модальное окно для редактирования игры -->
   <div class="modal fade" id="editGamesModal" tabindex="-1">
     <div class="modal-dialog modal-lg">
@@ -316,121 +550,82 @@ function applyUserFilter() {
     </div>
   </div>
 
-  <!-- Форма добавления новой игры -->
-  <div class="p-2">
-    <div class="row mb-4 align-items-end">
-      <div class="col">
-        <div class="form-floating">
-          <input
-            type="text"
-            class="form-control"
-            v-model="gamesToAdd.name"
-            placeholder="Название игры"
-          />
-          <label>Название игры</label>
-        </div>
-      </div>
-      <div class="col-auto">
-        <div class="form-floating">
-          <select class="form-select" v-model="gamesToAdd.genre">
-            <option disabled value="">Выберите жанр</option>
-            <option :value="g.id" v-for="g in genres" :key="g.id">{{ g.name }}</option>
-          </select>
-          <label>Жанр</label>
-        </div>
-      </div>
-      <div class="col-auto">
-        <div class="form-floating">
-          <select class="form-select" v-model="gamesToAdd.studio">
-            <option disabled value="">Выберите студию</option>
-            <option :value="s.id" v-for="s in studios" :key="s.id">{{ s.name }}</option>
-          </select>
-          <label>Студия</label>
-        </div>
-      </div>
-      <div class="col-auto">
-        <div class="form-floating">
-          <select class="form-select" v-model="gamesToAdd.director">
-            <option disabled value="">Выберите руководителя</option>
-            <option :value="d.id" v-for="d in directors" :key="d.id">{{ d.name }} {{ d.surname }}</option>
-          </select>
-          <label>Руководитель</label>
-        </div>
-      </div>
-      <div class="col-auto">
-        <div class="form-floating">
-          <select class="form-select" v-model="gamesToAdd.platform">
-            <option disabled value="">Выберите платформу</option>
-            <option :value="p.id" v-for="p in platforms" :key="p.id">{{ p.name }}</option>
-          </select>
-          <label>Платформа</label>
-        </div>
-      </div>
-      <div class="col-auto">
-        <label class="form-label">Изображение</label>
-        <input 
-          class="form-control" 
-          type="file" 
-          ref="gamesPictureRef" 
-          @change="gamesAddPictureChange"
-        >
-        <div v-if="gamesAddImageUrl" class="mt-2">
-          <img :src="gamesAddImageUrl" style="max-height: 60px;" alt="Предпросмотр">
-        </div>
-      </div>
-      <div class="col-auto">
-        <button class="btn btn-primary" @click="onGamesAdd">Добавить</button>
-      </div>
-    </div>
+  <!-- Список игр -->
+  <div>
+    <div v-for="item in games" :key="item.id" class="games-item mb-3 p-3 border rounded">
+      <div class="row">
+        <!-- Левая колонка: информация об игре -->
+        <div class="col-8">
+          <b>Название:</b> {{ item.name }} <br>
+          <b>Жанр:</b> {{ genreById[item.genre]?.name }} <br>
+          <b>Студия:</b> {{ studioById[item.studio]?.name }} <br>
+          <b>Руководитель:</b> {{ directorById[item.director]?.name }} {{ directorById[item.director]?.surname }} <br>
+          <b>Платформа:</b> {{ platformById[item.platform]?.name }} <br>
 
-    <!-- Поле ввода для фильтра по username и кнопка применить фильтр -->
-    <div class="row mb-3">
-      <div class="col-auto">
-        <input type="text" class="form-control" v-model="filterUsername" placeholder="Имя пользователя для фильтрации">
-      </div>
-      <div class="col-auto">
-        <button class="btn btn-info" @click="applyUserFilter">Применить фильтр</button>
-      </div>
-    </div>
+          <div v-if="item.picture" class="image-container mt-2" style="display:inline-block; position:relative;">
+            <img 
+              :src="item.picture" 
+              class="preview-image" 
+              style="max-height:60px;"
+              alt="Изображение игры"
+            >
+            <div class="zoom-icon" @click.stop="openImageModal(item.picture)">
+              <i class="bi bi-zoom-in" style="color: white; font-size:24px;"></i>
+            </div>
+          </div>
 
-    <!-- Список игр -->
-    <div>
-      <div v-for="item in games" :key="item.id" class="games-item mb-3 p-3 border rounded">
-        <b>Название:</b> {{ item.name }} <br />
-        <b>Жанр:</b> {{ genreById[item.genre]?.name }} <br />
-        <b>Студия:</b> {{ studioById[item.studio]?.name }} <br />
-        <b>Руководитель:</b> {{ directorById[item.director]?.name }} {{ directorById[item.director]?.surname }} <br />
-        <b>Платформа:</b> {{ platformById[item.platform]?.name }} <br />
-        <div v-if="item.picture" class="image-container mt-2" style="display:inline-block; position:relative;">
-          <img 
-            :src="item.picture" 
-            class="preview-image" 
-            style="max-height:60px;"
-            alt="Изображение игры"
-          >
-          <div class="zoom-icon" @click.stop="openImageModal(item.picture)">
-            <i class="bi bi-zoom-in" style="color: white; font-size:24px;"></i>
+          <div class="mt-2 d-flex gap-2">
+            <button class="btn btn-danger" @click="onGamesDelete(item)">
+              <i class="bi bi-trash"></i> Удалить
+            </button>
+            <button
+              class="btn btn-primary"
+              @click="onGamesEdit(item)"
+              data-bs-toggle="modal"
+              data-bs-target="#editGamesModal"
+            >
+              <i class="bi bi-pencil"></i> Редактировать
+            </button>
           </div>
         </div>
-        <div class="mt-2 d-flex gap-2">
-          <button class="btn btn-danger" @click="onGamesDelete(item)">
-            <i class="bi bi-trash"></i> Удалить
-          </button>
-          <button
-            class="btn btn-primary"
-            @click="onGamesEdit(item)"
-            data-bs-toggle="modal"
-            data-bs-target="#editGamesModal"
-          >
-            <i class="bi bi-pencil"></i> Редактировать
-          </button>
+
+        <!-- Правая колонка: комментарии -->
+        <div class="col-4">
+          <h5>Комментарии</h5>
+          <div v-if="commentsByGameId[item.id] && commentsByGameId[item.id].length > 0">
+            <div 
+              v-for="comment in commentsByGameId[item.id]" 
+              :key="comment.id" 
+              class="card mb-2"
+            >
+              <div class="card-body p-2">
+                <strong>{{ comment.username }}:</strong><br>
+                {{ comment.text }}
+              </div>
+            </div>
+          </div>
+          <div v-else>
+            <div class="text-muted">Комментариев пока нет.</div>
+          </div>
+
+          <!-- Форма для добавления нового комментария -->
+          <div class="mt-3">
+            <input 
+              type="text" 
+              class="form-control mb-2" 
+              :value="newCommentText[item.id]" 
+              @input="newCommentText[item.id] = $event.target.value"
+              placeholder="Ваш комментарий..."
+            >
+            <button class="btn btn-sm btn-secondary" @click="addComment(item.id)">Добавить комментарий</button>
+          </div>
         </div>
       </div>
     </div>
+  </div>
 
-    <div class="mt-3">
-      <button class="btn btn-secondary" @click="fetchGames">Обновить список</button>
-    </div>
+  <div class="mt-3">
+    <button class="btn btn-secondary" @click="() => { fetchGames(); fetchStatistics(); }">Обновить список</button>
   </div>
 
   <!-- Модальное окно для просмотра изображения -->

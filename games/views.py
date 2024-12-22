@@ -12,4 +12,6 @@ class ShowGamesViews(TemplateView):
         context['games'] = Games.objects.all()
 
         return context
+        
     
+
